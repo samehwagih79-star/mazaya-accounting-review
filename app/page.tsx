@@ -1,0 +1,76 @@
+"use client";
+import {useRef,useState} from "react";
+import {analyzeData,readAccountingFile,type AnalysisResult} from "./analyzer";
+
+const actions=[
+ ["مطابقة كشف البنك","ارفع كشف البنك ودفتر الأستاذ لتحديد الفروق وأول نقطة اختلاف","⇄"],
+ ["تحليل حساب عميل","الفواتير والتحصيل والرصيد وأعمار 0–30 حتى أكثر من 120 يومًا من تاريخ الإصدار","♙"],
+ ["تحليل حساب مورد","المشتريات والمدفوعات والرصيد المستحق وكشف الفروق","♟"],
+ ["مطابقة كشف المورد مع حسابنا","ارفع كشف المورد أولًا ثم كشف حسابه من ERP لإظهار كل الفروقات","⇄"],
+ ["أعمار الديون والاستحقاق","من تاريخ إصدار الفاتورة: 0–30، 31–45، 46–60، 61–90، 91–120، وأكثر من 120 يومًا","◷"],
+ ["مطابقة شبكة الراجحي","قارن مبيعات نقاط البيع مع الإيداعات والعمولات","▣"],
+ ["مطابقة شبكة ساب","اكتشف الإيداعات الناقصة أو المجمعة والمتأخرة","▣"],
+ ["مراجعة ميزان المراجعة","افحص توازن المدين والدائن والحسابات غير الطبيعية","≡"],
+ ["كشف القيود المكررة","حدد القيود المتشابهة في الرقم والمبلغ والتاريخ","⧉"],
+ ["مراجعة المبيعات والضريبة","طابق الفواتير والمرتجعات وضريبة القيمة المضافة","٪"],
+ ["مراجعة المشتريات","كشف الفواتير المفقودة والمكررة وأرصدة الموردين","▤"],
+ ["تحليل المخزون","الرصيد السالب والراكد وفروق الجرد والتكلفة","▦"],
+ ["مقارنة حركة الأصناف","اكتشف الصنف الناقص أو الزائد وحدد أول حركة سببت الفرق","⇅"],
+ ["الربحية الشهرية","اعرف كل شهر ربحنا أم خسرنا مع الهامش والمقارنة","↗"],
+ ["تحليل القوائم المالية","المركز المالي والدخل والتغيرات في حقوق الملكية","▥"],
+ ["تحليل الميزانية","الأصول والالتزامات والسيولة ورأس المال والمؤشرات","◈"],
+ ["التدفقات النقدية","تشغيلي واستثماري وتمويلي ومصادر استخدام النقد","≈"],
+ ["مراجعة ضريبة القيمة المضافة","مطابقة المبيعات والمشتريات والإقرارات والفروق","٪"],
+ ["مراجعة الزكاة","تحليل الوعاء والعناصر المؤثرة وتجهيز مسودة المراجعة","ز"],
+ ["الأصول والإهلاك","سجل الأصول والإضافات والاستبعادات ومجمع الإهلاك","◇"],
+ ["الرواتب والعهد","مطابقة الرواتب والتأمينات والسلف وعهد الموظفين","♧"],
+ ["تحليل النشاط التجاري","الربحية والسيولة والدوران والمخاطر ونقاط التحسين","◎"],
+];
+const side=["مراجعة شاملة لكل الحسابات","البنوك والشبكات والصندوق","العملاء وأعمار الديون","الموردون والاستحقاقات","المبيعات والمشتريات","المخزون والتكلفة","القيود وميزان المراجعة","القوائم والميزانيات","الضريبة والزكاة","المصروفات والربحية","التقارير المحفوظة"];
+const prompts=["حلّل كشف حساب المورد وحدد الرصيد المستحق","طابق كشف المورد مع حسابنا وأظهر الفروقات","صنّف رصيد العميل 0–30 و31–45 و46–60 و61–90 و91–120 وأكثر من 120 يومًا من تاريخ إصدار الفاتورة","طابق كشف الراجحي مع الأستاذ العام","حدد أول نقطة اختلاف بين الكشفين","قارن حركة الأصناف وحدد الصنف الناقص","احسب الربحية الشهرية وحدد أشهر الربح والخسارة"];
+const emptyAging=[
+ {label:"0–30 يومًا",value:"0.00 ر.س",count:0,percent:"0%",tone:"ok"},
+ {label:"31–45 يومًا",value:"0.00 ر.س",count:0,percent:"0%",tone:"info"},
+ {label:"46–60 يومًا",value:"0.00 ر.س",count:0,percent:"0%",tone:"info"},
+ {label:"61–90 يومًا",value:"0.00 ر.س",count:0,percent:"0%",tone:"warn"},
+ {label:"91–120 يومًا",value:"0.00 ر.س",count:0,percent:"0%",tone:"warn"},
+ {label:"أكثر من 120 يومًا",value:"0.00 ر.س",count:0,percent:"0%",tone:"bad"},
+] as const;
+
+export default function Home(){
+ const input=useRef<HTMLInputElement>(null);const pendingAction=useRef("");const [files,setFiles]=useState<File[]>([]);const [message,setMessage]=useState("");const [active,setActive]=useState("مراجعة شاملة لكل الحسابات");const [creditDays,setCreditDays]=useState(30);const [result,setResult]=useState<AnalysisResult|null>(null);const [status,setStatus]=useState("");const [error,setError]=useState("");
+ async function analyzeFiles(next:File[],request:string){if(!next.length)return;setStatus(`جارٍ إعداد تقرير: ${request}`);setError("");try{const data=await Promise.all(next.map(readAccountingFile));const report=analyzeData(request,data,creditDays);setResult(report);setStatus("");pendingAction.current="";window.setTimeout(()=>document.getElementById("analysis-result")?.scrollIntoView({behavior:"smooth",block:"start"}),100)}catch(e){setStatus("");setError(e instanceof Error?e.message:"تعذر تحليل الملف. تأكد من أنه غير تالف وأن الأعمدة واضحة.");window.setTimeout(()=>document.getElementById("analysis-error")?.scrollIntoView({behavior:"smooth",block:"center"}),100)}}
+ function choose(t:string){pendingAction.current=t;setMessage(t);setError("");if(files.length)void analyzeFiles(files,t);else input.current?.click()}
+ function handleFiles(list:FileList|null){const next=Array.from(list||[]);setFiles(next);setError("");const request=pendingAction.current||message||active||"مراجعة شاملة لكل الحسابات";if(next.length){if(!message)setMessage(request);void analyzeFiles(next,request)}}
+ async function run(){if(!files.length){input.current?.click();return}await analyzeFiles(files,message||active)}
+ const balanceSummary=result?.summary.find(item=>/الرصيد الختامي|صافي رصيد|إجمالي المستحق|اجمالي المستحق/.test(item.label));
+ const closingBalance=result?.aging?.total||result?.conclusion?.value||balanceSummary?.value||(result?"غير متاح لهذا التقرير":"0.00 ر.س");
+ const provisionalBalance=!!result?.conclusion?.detail.includes("مبدئي");
+ const dashboardAging=result?.aging?.buckets||emptyAging;
+ return <main className="shell">
+  <aside><div className="logo"><b>م</b><div><strong>شركة مزايا</strong><span>لتقنية المعلومات</span></div></div><nav>{side.map((s,i)=><button onClick={()=>setActive(s)} className={active===s?"active":""} key={s}><i>{["⌂","▣","♙","♟","▤","▦","≡","▥","٪","↗","▥"][i]}</i>{s}</button>)}</nav><div className="secure">✓ وضع المراجعة الآمن<small>لا يتم تعديل قيود الـ ERP الأصلية</small></div></aside>
+  <section className="page"><header><div><h1>{active}</h1><p>شركة مزايا لتقنية المعلومات · الفرع الرئيسي</p></div><button onClick={()=>input.current?.click()}>＋ رفع ملفات للتحليل</button></header>
+   <div className="hero"><div className="ai">M</div><h2>المساعد المحاسبي لشركة مزايا لتقنية المعلومات</h2><p>ارفع كشوف Excel أو PDF وتقارير الـ ERP، واختر نوع المراجعة. سيقارن المساعد الحركات ويحدد الفروق والمتأخرات وتواريخ الاستحقاق ويجهز تقريرًا واضحًا للمحاسب.</p><div className="badges"><span>Excel</span><span>PDF</span><span>كشف بنك</span><span>تقرير ERP</span></div></div>
+   <div className="cards">{actions.map(([t,d,ic])=><button key={t} onClick={()=>choose(t)}><i>{ic}</i><div><strong>{t}</strong><span>{d}</span></div><b>←</b></button>)}</div>
+   <section className="due"><div><h3>أعمار حسابات العملاء والموردين بعد مدة الائتمان</h3><p>استحقاق كل فاتورة = تاريخ إصدارها + مدة الائتمان المختارة، ثم يبدأ حساب أيام التأخر</p></div><div className={`due-total ${result?"live":""}`}><span>الرصيد الختامي</span><strong>{closingBalance}</strong><small>{provisionalBalance?"△ مبدئي من آخر رصيد جارٍ — راجعه قبل الاعتماد":result?"✓ من نتيجة التحليل الحالية":"بانتظار رفع الملف"}</small></div><div className="due-grid">{dashboardAging.map(bucket=><article className={bucket.tone} key={bucket.label}><span>{bucket.label}</span><strong>{bucket.value}</strong><small>{result?.aging?`${bucket.count} بند · ${bucket.percent}`:result?"اختر تحليل عميل أو مورد لإظهار الأعمار":"بانتظار رفع الملف"}</small></article>)}</div></section>
+   <section className="upload"><div className="paper">⇧</div><div><strong>{files.length?`تم اختيار ${files.length} ملف` : "اختر نوع التقرير ثم ارفع الملفات"}</strong><span>{message.includes("مطابقة كشف المورد")?"اختر كشف المورد أولًا ثم كشف حسابه من ERP — تبدأ المطابقة تلقائيًا":"يبدأ التحليل تلقائيًا بعد اختيار Excel أو CSV أو PDF"}</span>{files.length>0&&<small>{files.map(f=>f.name).join(" · ")}</small>}</div><button onClick={()=>input.current?.click()}>اختيار الملفات</button><input ref={input} type="file" multiple accept=".pdf,.xlsx,.xls,.csv,.txt" onChange={e=>{handleFiles(e.target.files);e.currentTarget.value=""}}/></section>
+   <section className="composer"><div className="chips">{prompts.map(p=><button key={p} onClick={()=>{setMessage(p);pendingAction.current=p}}>{p}</button>)}</div><div className="credit-term"><label>مدة الائتمان</label><select value={creditDays} onChange={e=>setCreditDays(Number(e.target.value))}><option value={30}>30 يومًا</option><option value={45}>45 يومًا</option><option value={60}>60 يومًا</option></select><span>تُطبق على كل فاتورة من تاريخ إصدارها</span></div><div className="box"><input value={message} onChange={e=>{setMessage(e.target.value);pendingAction.current=e.target.value}} placeholder="اكتب طلب المراجعة هنا... مثال: احسب الربحية الشهرية"/><button onClick={run} disabled={!!status}>{status?"جارٍ التحليل...":"إعداد التقرير"}</button></div>{status&&<div className="processing"><b>◌</b><div><strong>جارٍ قراءة البيانات وإعداد التقرير</strong><span>{status}</span></div></div>}{error&&<div id="analysis-error" className="error"><b>تعذر إعداد التقرير</b><span>{error}</span><button onClick={()=>input.current?.click()}>اختر ملفًا آخر</button></div>}<small>تتم معالجة الملفات داخل الصفحة ولا يُرحّل النظام أي قيد. راجع النتائج قبل الاعتماد.</small></section>
+   {result?<ResultView result={result}/>:<section id="analysis-result" className="report-placeholder"><div>▥</div><h2>سيظهر تقرير التحليل هنا داخل الصفحة</h2><p>اختر نوع التحليل من المربعات، ثم ارفع الملف. لا يلزم طباعة التقرير أو تنزيله؛ يمكنك قراءة كل النتائج والجداول مباشرة من الواجهة.</p></section>} 
+  </section>
+ </main>
+}
+
+function reportRows(result:AnalysisResult){return [["التقرير",result.title],["درجة الثقة",result.confidence],...(result.conclusion?[["النتيجة النهائية",result.conclusion.label],[result.conclusion.label,result.conclusion.value],["توضيح",result.conclusion.detail]]:[]),...(result.supplierFlow?[["",""],[result.supplierFlow.title,""],["مصدر الرصيد",result.supplierFlow.source],["معادلة الحساب",result.supplierFlow.equation],...result.supplierFlow.items.map(item=>[item.label,item.value,item.hint])]:[]),...(result.aging?[["",""],[result.aging.title,result.aging.total],["تاريخ القياس",result.aging.asOf],["أساس الاحتساب",result.aging.basis],["الفترة","المبلغ","عدد البنود","النسبة"],...result.aging.buckets.map(b=>[b.label,b.value,String(b.count),b.percent])]:[]),["",""],...result.summary.map(s=>[s.label,s.value]),["",""],["الملاحظات",""],...result.findings.map(f=>[f.title,f.detail]),...(result.table?[["",""],result.table.headers,...result.table.rows]:[])]}
+function reportText(result:AnalysisResult){return reportRows(result).map(r=>r.join(": ")).join("\n")}
+function downloadReport(result:AnalysisResult){const csv="\ufeff"+reportRows(result).map(r=>r.map(c=>`"${String(c).replaceAll('"','""')}"`).join(",")).join("\n");const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=`تقرير-${result.title}.csv`;a.click();URL.revokeObjectURL(url)}
+function ResultView({result}:{result:AnalysisResult}){const [copied,setCopied]=useState(false);const needsReview=result.confidence==="محدودة"||result.conclusion?.tone==="bad";async function copy(){await navigator.clipboard.writeText(reportText(result));setCopied(true);window.setTimeout(()=>setCopied(false),1800)}return <section id="analysis-result" className="result">
+ <div className={`report-ready ${needsReview?"needs-review":""}`}>{needsReview?"△ تم إعداد قراءة مبدئية — توجد بيانات تحتاج تأكيدًا قبل الاعتماد":"✓ تم إعداد التقرير بنجاح — راجع النتائج ثم اطبعها أو نزّلها"}</div>
+ <div className="result-head"><div><span>تقرير المراجعة ظاهر داخل الصفحة</span><h2>{result.title}</h2><p>درجة الثقة في التعرف على الأعمدة: <b>{result.confidence}</b></p></div><div className="result-actions"><button onClick={copy}>{copied?"تم نسخ النتائج ✓":"نسخ النتائج"}</button><button onClick={()=>downloadReport(result)}>تنزيل CSV</button><button onClick={()=>window.print()}>طباعة (اختياري)</button></div></div>
+ {result.conclusion&&<div className={`result-conclusion ${result.conclusion.tone}`}><div><span>النتيجة النهائية</span><h3>{result.conclusion.label}</h3><strong>{result.conclusion.value}</strong></div><p>{result.conclusion.detail}</p></div>}
+ {result.supplierFlow&&<section className="supplier-flow"><div className="supplier-flow-head"><div><span>حساب المورد بصورة محاسبية واضحة</span><h3>{result.supplierFlow.title}</h3><p>{result.supplierFlow.note}</p></div><div><b>مصدر الصافي</b><strong>{result.supplierFlow.source}</strong></div></div><div className="supplier-equation">{result.supplierFlow.equation}</div><div className="supplier-flow-grid">{result.supplierFlow.items.map(item=><article className={item.tone} key={item.label}><span>{item.label}</span><strong>{item.value}</strong><small>{item.hint}</small></article>)}</div></section>}
+ {result.aging&&<section className="aging-result"><div className="aging-head"><div><span>يظهر تلقائيًا بعد التحليل</span><h3>{result.aging.title}</h3><p>{result.aging.basis}</p></div></div><div className="aging-total"><span>الرصيد الختامي</span><strong>{result.aging.total}</strong><small>حتى {result.aging.asOf}</small></div><div className="aging-buckets">{result.aging.buckets.map(bucket=><article className={bucket.tone} key={bucket.label}><span>{bucket.label}</span><strong>{bucket.value}</strong><small>{bucket.count} بند · {bucket.percent}</small></article>)}</div></section>}
+ <div className="result-summary">{result.summary.map(s=><article className={s.tone||""} key={s.label}><span>{s.label}</span><strong>{s.value}</strong></article>)}</div>
+ <div className="finding-grid">{result.findings.map((f,i)=><article className={f.tone} key={i}><b>{f.tone==="ok"?"✓":f.tone==="bad"?"!":f.tone==="warn"?"△":"i"}</b><div><strong>{f.title}</strong><p>{f.detail}</p></div></article>)}</div>
+ {result.table&&<section className="table-section"><div className="table-title"><div><span>التفاصيل المحاسبية</span><h3>حركات ومستندات كشف الحساب</h3></div><strong>{result.table.rows.length} حركة</strong></div>{result.table.rows.length?<div className="result-table"><table><thead><tr>{result.table.headers.map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{result.table.rows.map((r,i)=>{const text=r.join(" ");const rowClass=/مشتريات/.test(text)?"purchase-row":/مبيعات/.test(text)?"sale-row":/سداد|مرتجع|إشعار خصم/.test(text)?"payment-row":"";return <tr className={rowClass} key={i}>{r.map((c,j)=>{const isKind=result.table?.headers[j]==="نوع المستند",kindClass=isKind?`doc-kind ${/مشتريات/.test(c)?"purchase":/مبيعات/.test(c)?"sale":/سداد/.test(c)?"payment":/مرتجع/.test(c)?"return":/إشعار خصم/.test(c)?"discount":"unknown"}`:"";return <td className={kindClass} key={j}>{isKind?<span>{c}</span>:c}</td>})}</tr>})}</tbody></table></div>:<div className="empty-table"><b>لم تُقرأ حركات من الملف</b><span>تأكد أن صف عناوين الأعمدة يحتوي التاريخ والبيان والمدين والدائن أو الرصيد، ثم أعد رفع الملف.</span></div>}</section>}
+ <div className="audit"><div><h3>فحوص وضوابط الاعتماد</h3>{result.checks.map(c=><p key={c}>✓ {c}</p>)}</div><div><h3>الملفات المصدر</h3>{result.sources.map(s=><p key={s}>▤ {s}</p>)}</div></div>
+ </section>}
