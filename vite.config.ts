@@ -1,39 +1,45 @@
 import vinext from "vinext";
+import { readFile } from "node:fs/promises";
 import { defineConfig } from "vite";
-import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 
-const { d1, r2 } = hostingConfig;
-
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
-const localBindingConfig = {
-  main: "./worker/index.ts",
-  compatibility_flags: ["nodejs_compat"],
-  d1_databases: d1
-    ? [
-        {
-          binding: d1,
-          database_name: "site-creator-d1",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
-        },
-      ]
-    : [],
-  r2_buckets: r2
-    ? [
-        {
-          binding: r2,
-          bucket_name: "site-creator-r2",
-        },
-      ]
-    : [],
-};
-
 export default defineConfig(async () => {
+  // The ChatGPT Sites manifest exists in the Sites checkout, but is purposely
+  // excluded from public Git repositories. Cloudflare builds therefore fall
+  // back to an unbound Worker instead of failing during config loading.
+  const hostingConfig = await readFile(".openai/hosting.json", "utf8")
+    .then((contents) => JSON.parse(contents) as { d1?: string | null; r2?: string | null })
+    .catch(() => ({ d1: null, r2: null }));
+  const { d1, r2 } = hostingConfig;
+
+  const localBindingConfig = {
+    main: "./worker/index.ts",
+    compatibility_flags: ["nodejs_compat"],
+    d1_databases: d1
+      ? [
+          {
+            binding: d1,
+            database_name: "site-creator-d1",
+            database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          },
+        ]
+      : [],
+    r2_buckets: r2
+      ? [
+          {
+            binding: r2,
+            bucket_name: "site-creator-r2",
+          },
+        ]
+      : [],
+  };
+
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
