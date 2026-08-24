@@ -24,14 +24,16 @@ test("locks the 45-day actual-due rule for customers",async()=>{
   assert.equal(result.dueScenarios?.items.find(item=>item.days===45)?.value,"٨٠٠٫٠٠ ر.س");
 });
 
-test("prefers the explicit due date and then applies supplier payments FIFO",async()=>{
-  const data=await csv("supplier-due.csv","التاريخ,تاريخ الاستحقاق,البيان,مدين,دائن\n2026-01-01,2026-04-01,فاتورة مشتريات,0,1000\n2026-03-15,2026-03-16,فاتورة مشتريات,0,500\n2026-03-20,,سند صرف,200,0");
+test("calculates 30, 45 and 60 days independently from invoice issue dates",async()=>{
+  const data=await csv("supplier-terms.csv","التاريخ,تاريخ الاستحقاق,البيان,مدين,دائن\n2026-01-20,2026-12-31,فاتورة مشتريات,0,1000\n2026-02-10,2026-12-31,فاتورة مشتريات,0,1000\n2026-02-25,2026-12-31,فاتورة مشتريات,0,1000\n2026-03-20,,مردود مشتريات,200,0\n2026-03-31,,سند صرف,100,0");
   const result=analyzeData("تحليل حساب مورد",[data],45);
-  assert.equal(result.conclusion?.value,"٥٠٠٫٠٠ ر.س");
-  assert.match(result.findings.map(item=>item.detail).join(" "),/تاريخ استحقاق صريح/);
-  assert.equal(result.dueTable?.rows[0][3],"موجود في الكشف");
-  assert.equal(result.dueTable?.rows[0][6],"غير مستحق");
-  assert.equal(result.dueTable?.rows[1][6],"مستحق");
+  const scenarios=Object.fromEntries((result.dueScenarios?.items??[]).map(item=>[item.days,item.value]));
+  assert.equal(scenarios[30],"٢٬٧٠٠٫٠٠ ر.س");
+  assert.equal(scenarios[45],"١٬٧٠٠٫٠٠ ر.س");
+  assert.equal(scenarios[60],"٧٠٠٫٠٠ ر.س");
+  assert.equal(result.conclusion?.value,"١٬٧٠٠٫٠٠ ر.س");
+  assert.equal(result.dueTable?.rows[0][3],"تاريخ الفاتورة + 45 يومًا");
+  assert.match(result.findings.map(item=>item.detail).join(" "),/تاريخ إصدارها \+ 45 يومًا/);
 });
 
 test("deducts customer returns and receipts before calculating the due balance",async()=>{
