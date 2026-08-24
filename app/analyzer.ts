@@ -8,6 +8,7 @@ export type DataSet = {
   rawText?: string;
   pdfLines?: string[];
   sheets?: string[];
+  parsedSheets?: string[];
   pages?: number;
   reportAsOf?: string;
 };
@@ -92,20 +93,17 @@ function parseCsv(text: string) {
 
 export async function readAccountingFile(file: File): Promise<DataSet> {
   const ext = file.name.split(".").pop()?.toLowerCase();
-  if (ext === "xlsx" || ext === "xls") {
+  if (["xlsx","xls","xlsm","xlsb","ods"].includes(ext||"")) {
     const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
-    const first = wb.SheetNames[0];
-    const matrix = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[first], { header: 1, defval: "", raw: false });
-    const headerWords=/تاريخ|بيان|مرجع|مستند|فاتور|مدين|دائن|رصيد|debit|credit|balance|date|reference|invoice/i;
-    const candidates=matrix.slice(0,40).map((row,index)=>{
-      const cells=row.map(value=>String(value??"").trim()),filled=cells.filter(Boolean).length;
-      const keywordHits=cells.filter(cell=>headerWords.test(normalize(cell))).length;
-      return{index,cells,filled,score:keywordHits*10+Math.min(filled,8)};
-    }).filter(candidate=>candidate.filled>=2).sort((a,b)=>b.score-a.score||a.index-b.index);
-    const headerIndex=candidates[0]?.index??0,rawHeaders=(matrix[headerIndex]||[]).map((value,index)=>String(value||`عمود ${index+1}`).trim());
-    const seen=new Map<string,number>(),columns=rawHeaders.map((header,index)=>{const base=header||`عمود ${index+1}`,count=seen.get(base)||0;seen.set(base,count+1);return count?`${base} (${count+1})`:base});
-    const rows=matrix.slice(headerIndex+1).filter(row=>row.some(value=>String(value??"").trim())).map(row=>Object.fromEntries(columns.map((column,index)=>[column,row[index]??""]))),reportAsOf=extractReportAsOf(matrix.slice(0,headerIndex).flat());
-    return { fileName: file.name, kind: "sheet", rows, columns, sheets: wb.SheetNames, reportAsOf };
+    const headerWords=/تاريخ|بيان|وصف|مرجع|مستند|فاتور|مدين|دائن|رصيد|صنف|كمي|جرد|تكلف|debit|credit|balance|date|reference|invoice|item|quantity|cost/i,allRows:Record<string,unknown>[]=[],allColumns:string[]=[],parsedSheets:string[]=[];let reportAsOf:string|undefined;
+    const summaryPattern=/^(?:ال)?(?:اجمالي|إجمالي|المجموع|الصافي|الرصيد النهائي|grand total|total)$/i;
+    for(const sheetName of wb.SheetNames){const sheet=wb.Sheets[sheetName];if(!sheet||!sheet["!ref"])continue;const matrix=XLSX.utils.sheet_to_json<unknown[]>(sheet,{header:1,defval:"",raw:false,blankrows:false});if(!matrix.length)continue;
+      const candidates=matrix.slice(0,60).map((row,index)=>{const cells=row.map(value=>String(value??"").replace(/\s+/g," ").trim()),filled=cells.filter(Boolean).length,keywordHits=cells.filter(cell=>headerWords.test(normalize(cell))).length,numeric=cells.filter(cell=>Math.abs(number(cell))>0).length;return{index,filled,score:keywordHits*12+Math.min(filled,10)-numeric*2}}).filter(candidate=>candidate.filled>=2).sort((a,b)=>b.score-a.score||a.index-b.index),headerIndex=candidates[0]?.index??0;
+      if((candidates[0]?.score??0)<4)continue;const current=(matrix[headerIndex]||[]).map(value=>String(value??"").replace(/\s+/g," ").trim()),previous=headerIndex>0?(matrix[headerIndex-1]||[]).map(value=>String(value??"").replace(/\s+/g," ").trim()):[],rawHeaders=current.map((header,index)=>header||previous[index]||`عمود ${index+1}`),seen=new Map<string,number>(),columns=rawHeaders.map((header,index)=>{const base=header||`عمود ${index+1}`,count=seen.get(base)||0;seen.set(base,count+1);return count?`${base} (${count+1})`:base});
+      parsedSheets.push(sheetName);reportAsOf=reportAsOf||extractReportAsOf(matrix.slice(0,headerIndex).flat());for(const row of matrix.slice(headerIndex+1)){if(!row.some(value=>String(value??"").trim()))continue;const firstText=row.slice(0,3).map(value=>String(value??"").trim()).find(Boolean)||"",hasDate=row.some(value=>value instanceof Date||/^\d{1,4}[\/\-.]\d{1,2}[\/\-.]\d{1,4}$/.test(westernDigits(String(value??"").trim())));if(summaryPattern.test(firstText)&&!hasDate)continue;const record=Object.fromEntries(columns.map((column,index)=>[column,row[index]??""]));record.__sheet=sheetName;allRows.push(record)}for(const columnName of columns)if(!allColumns.includes(columnName))allColumns.push(columnName)
+    }
+    if(!allRows.length)throw new Error("لم يتم العثور على جدول محاسبي واضح داخل أوراق Excel. راجع الترويسات أو أرسل الملف لفحص التنسيق.");
+    return { fileName: file.name, kind: "sheet", rows:allRows, columns:allColumns, sheets: wb.SheetNames, parsedSheets, reportAsOf };
   }
   if (ext === "pdf") {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -191,8 +189,10 @@ function parseDate(v: unknown): Date | null {
 }
 
 function standardChecks(ds: DataSet[]) {
+  const excelDetails=ds.filter(d=>d.kind==="sheet").map(d=>`${d.fileName}: تمت قراءة ${d.rows.length.toLocaleString("ar-SA")} صف و${d.columns.length.toLocaleString("ar-SA")} عمود من ${d.parsedSheets?.length||1} ورقة (${(d.parsedSheets||d.sheets||[]).join("، ")||"الورقة الرئيسية"}).`);
   return [
     `تمت قراءة ${ds.reduce((s,d)=>s+d.rows.length,0).toLocaleString("ar-SA")} صف من ${ds.length} ملف.`,
+    ...excelDetails,
     "تم تجاهل الصفوف الفارغة والقيم غير الرقمية عند الجمع.",
     "يجب مطابقة الرصيد الافتتاحي والختامي مع التقرير الأصلي قبل الاعتماد.",
     "لا يتم إنشاء أو ترحيل أي قيد محاسبي تلقائيًا.",
@@ -700,6 +700,11 @@ function bank(ds: DataSet[]): AnalysisResult {
 export function analyzeData(action: string, ds: DataSet[],creditDays=30): AnalysisResult {
   if(!ds.length) throw new Error("يرجى اختيار ملف واحد على الأقل.");
   const request=normalize(action);
+  if(ds.every(d=>d.kind!=="pdf")){const first=ds[0],ledgerRequest=request.includes("مورد")||request.includes("عميل")||request.includes("ديون")||request.includes("استحقاق"),inventoryRequest=request.includes("جرد")||request.includes("مخزون")||request.includes("صنف"),journalRequest=request.includes("قيود اليوميه");
+    if(ledgerRequest&&(!column(first,"date")&&!column(first,"invoiceDate")||(!column(first,"balance")&&!(column(first,"debit")&&column(first,"credit")))))throw new Error("توقّف التحليل: لم يتم التعرف بثقة على تاريخ الحركة وأعمدة الرصيد أو المدين والدائن. لن يعرض البرنامج نتيجة قبل قراءة الأعمدة بصورة صحيحة.");
+    if(journalRequest&&(!column(first,"date")||!column(first,"debit")||!column(first,"credit")))throw new Error("توقّف التحليل: ملف قيود اليومية يجب أن يحتوي على التاريخ والمدين والدائن بوضوح.");
+    if(inventoryRequest&&ds.some(d=>!column(d,"item")||!(column(d,"actual")||column(d,"system")||column(d,"stockQty")||column(d,"balance"))))throw new Error("توقّف التحليل: لم يتم التعرف على عمود الصنف وعمود الكمية في أحد ملفات المخزون أو الجرد.");
+  }
   // ملف واحد = تحليل كشف المورد دائمًا. المطابقة لا تبدأ إلا عند اختيارها صراحة
   // ورفع ملفين، حتى لا يتوقف التحليل العادي بطلب ملف ثانٍ.
   if(request.includes("مطابقه كشف المورد")&&ds.length>=2) return supplierReconciliation(ds);

@@ -1,11 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { File } from "node:buffer";
+import * as XLSX from "xlsx";
 import { analyzeData, readAccountingFile } from "../app/analyzer.ts";
 
 async function csv(name: string, value: string) {
   return readAccountingFile(new File([value], name, { type: "text/csv" }) as unknown as globalThis.File);
 }
+
+test("reads accounting tables across differently formatted Excel sheets", async () => {
+  const workbook=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook,XLSX.utils.aoa_to_sheet([["شركة مزايا"],["تقرير داخلي"]]),"غلاف");
+  XLSX.utils.book_append_sheet(workbook,XLSX.utils.aoa_to_sheet([["كشف الحساب حتى 24/08/2026"],[""],["التاريخ","رقم المرجع","مدين","دائن","الرصيد"],["2026-08-01","A-1",100,0,100],["إجمالي",100,0,0,100]]),"الحركات");
+  XLSX.utils.book_append_sheet(workbook,XLSX.utils.aoa_to_sheet([["التاريخ","رقم المرجع","مدين","دائن","الرصيد"],["2026-08-02","A-2",0,50,50]]),"تكملة");
+  const bytes=XLSX.write(workbook,{type:"array",bookType:"xlsx"});
+  const data=await readAccountingFile(new File([bytes],"multi-sheet.xlsx") as unknown as globalThis.File);
+  assert.deepEqual(data.parsedSheets,["الحركات","تكملة"]);
+  assert.equal(data.rows.length,2);
+  assert.equal(data.reportAsOf,"24/08/2026");
+});
 
 test("calculates monthly profit and loss", async () => {
   const data = await csv("profit.csv", "التاريخ,الايرادات,تكلفة المبيعات,المصروفات\n2026-01-01,100000,60000,20000\n2026-02-01,50000,40000,15000");
