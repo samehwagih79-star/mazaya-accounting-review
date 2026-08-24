@@ -132,6 +132,17 @@ test("shows customer flow like supplier flow with customer deductions", async ()
   assert.equal(result.summary.find(item=>item.label==="مردود المبيعات المخصوم")?.value, "١٬٠٠٠٫٠٠ ر.س");
 });
 
+test("compares physical count with system inventory and values differences", async () => {
+  const physical = await csv("جرد-فعلي.csv", "الصنف,الكمية\nHP-01,8\nDELL-02,6");
+  const system = await csv("مخزون-النظام.csv", "الصنف,رصيد النظام,التكلفة\nHP-01,10,100\nDELL-02,5,200");
+  const result = analyzeData("مطابقة الجرد الفعلي مع النظام", [physical, system]);
+  assert.equal(result.title, "مطابقة الجرد الفعلي مع رصيد النظام");
+  assert.equal(result.summary.find(item=>item.label==="أصناف ناقصة")?.value, "1");
+  assert.equal(result.summary.find(item=>item.label==="أصناف زائدة")?.value, "1");
+  assert.equal(result.summary.find(item=>item.label==="قيمة العجز")?.value, "٢٠٠٫٠٠ ر.س");
+  assert.equal(result.summary.find(item=>item.label==="قيمة الزيادة")?.value, "٢٠٠٫٠٠ ر.س");
+});
+
 test("finds invoice VAT arithmetic error", async () => {
   const data = await csv("sales.csv", "رقم الفاتورة,الصافي قبل الضريبة,الضريبة,الاجمالي شامل الضريبة\nINV-1,1000,150,1150\nINV-2,500,75,600");
   const result = analyzeData("مراجعة المبيعات والضريبة", [data]);
