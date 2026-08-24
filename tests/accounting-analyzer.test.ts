@@ -399,3 +399,24 @@ test("ignores report dates, selects the transaction date, and repairs fragmented
   assert.doesNotMatch(result.table?.rows[1][2] ?? "", /م و ر د/);
   assert.doesNotMatch(JSON.stringify(result), /زيادة|نقص/);
 });
+
+test("reconciles bank and ERP by amount date and reference and classifies differences", async () => {
+  const bankFile = await csv("bank.csv", "التاريخ,المرجع,البيان,المبلغ\n2026-08-01,TRX-1,تحويل عميل,1000\n2026-08-02,FEE-1,عمولة بنكية,-25\n2026-08-05,TRX-2,سداد مورد,-400");
+  const systemFile = await csv("erp.csv", "التاريخ,المرجع,البيان,المبلغ\n2026-08-02,TRX-1,تحويل عميل,1000\n2026-08-05,TRX-2,سداد مورد,-400\n2026-08-06,DEP-1,إيداع معلق,600");
+  const result = analyzeData("مطابقة كشف البنك", [bankFile, systemFile]);
+  assert.equal(result.title, "مطابقة كشف البنك مع النظام");
+  assert.equal(result.summary.find(item=>item.label==="حركات مطابقة")?.value, "2");
+  assert.equal(result.summary.find(item=>item.label==="بالبنك فقط")?.value, "1");
+  assert.equal(result.summary.find(item=>item.label==="بالنظام فقط")?.value, "1");
+  assert.match(result.findings.find(item=>item.title==="أول نقطة اختلاف")?.detail??"", /٠٢.*٠٨.*٢٠٢٦/);
+  assert.match(result.table?.rows.find(row=>row[0]==="بالبنك فقط")?.[7]??"", /عمولة بنكية/);
+  assert.match(result.checks.join(" "), /لا يتم إنشاء أو ترحيل قيود تلقائيًا/);
+});
+
+test("flags same-reference bank movements with different amounts", async () => {
+  const bankFile = await csv("bank.csv", "التاريخ,المرجع,المبلغ\n2026-08-01,TRX-9,1000");
+  const systemFile = await csv("erp.csv", "التاريخ,المرجع,المبلغ\n2026-08-01,TRX-9,900");
+  const result = analyzeData("مطابقة كشف البنك", [bankFile, systemFile]);
+  assert.equal(result.summary.find(item=>item.label==="مبالغ مختلفة")?.value, "1");
+  assert.equal(result.table?.rows.find(row=>row[0]==="مبلغ مختلف")?.[5], "١٠٠٫٠٠ ر.س");
+});
