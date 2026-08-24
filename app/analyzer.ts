@@ -16,6 +16,7 @@ export type AnalysisResult = {
   title: string;
   confidence: "عالية" | "متوسطة" | "محدودة";
   conclusion?: { label: string; value: string; detail: string; tone: "ok" | "warn" | "bad" | "info" };
+  dueScenarios?: { selectedDays: number; items: { days: number; label: string; value: string; selected: boolean }[] };
   aging?: { title: string; asOf: string; basis: string; total: string; buckets: { label: string; value: string; count: number; percent: string; tone: "ok" | "info" | "warn" | "bad" }[] };
   supplierFlow?: {
     title: string;
@@ -65,7 +66,8 @@ const agingTones=["ok","info","info","warn","warn","bad"] as const;
 function agingIndex(invoiceAge:number){return invoiceAge<=30?0:invoiceAge<=45?1:invoiceAge<=60?2:invoiceAge<=90?3:invoiceAge<=120?4:5}
 function consumeOldest(lots:AgingLot[],amount:number){let remaining=amount;lots.sort((a,b)=>a.date.getTime()-b.date.getTime());for(const lot of lots){if(remaining<=.001)break;const paid=Math.min(lot.amount,remaining);lot.amount-=paid;remaining-=paid}return lots.filter(x=>x.amount>.001)}
 function reconcileLots(lots:AgingLot[],target:number,fallbackDate:Date){const current=lots.reduce((s,x)=>s+x.amount,0),difference=target-current;if(difference>.02)lots.push({date:fallbackDate,amount:difference,ref:"رصيد مرحّل"});else if(difference<-.02)lots=consumeOldest(lots,-difference);return lots}
-function buildAging(lots:AgingLot[],asOf:Date,basis:string,title="أعمار المستحقات",creditDays=30){const raw=agingLabels.map(()=>({amount:0,count:0})),nonDueThrough=creditDays<=30?0:creditDays<=45?1:2;for(const lot of lots.filter(x=>x.amount>.001)){const invoiceAge=Math.max(0,Math.floor((asOf.getTime()-lot.date.getTime())/86400000)),index=agingIndex(invoiceAge);raw[index].amount+=lot.amount;raw[index].count++}const total=raw.reduce((s,x)=>s+x.amount,0);return{title,asOf:pdfDateFormatter.format(asOf),basis:`${basis} العمر يبقى محسوبًا من تاريخ الفاتورة، ومدة الائتمان ${creditDays} يومًا تحدد فقط حالة مستحقة/غير مستحقة.`,total:money(total),buckets:raw.map((bucket,index)=>({label:`${agingLabels[index]} · ${index<=nonDueThrough?"غير مستحق":"مستحق"}`,value:money(bucket.amount),count:bucket.count,percent:total?`${(bucket.amount/total*100).toFixed(1)}%`:"0%",tone:agingTones[index]}))}}
+function agingRanges(creditDays:number){const days=Math.max(1,Math.min(365,Math.round(creditDays))),bounds=[60,90,120].filter(bound=>bound>days),ranges:{label:string;min:number;max:number;tone:"ok"|"info"|"warn"|"bad"}[]=[{label:`0–${days} يومًا · غير مستحق`,min:0,max:days,tone:"ok"}];let start=days+1;for(const bound of bounds){ranges.push({label:`${start}–${bound} يومًا · مستحق`,min:start,max:bound,tone:bound<=60?"info":"warn"});start=bound+1}ranges.push({label:`أكثر من ${Math.max(days,120)} يومًا · مستحق`,min:start,max:Infinity,tone:"bad"});return ranges}
+function buildAging(lots:AgingLot[],asOf:Date,basis:string,title="أعمار المستحقات",creditDays=30){const ranges=agingRanges(creditDays),raw=ranges.map(()=>({amount:0,count:0}));for(const lot of lots.filter(x=>x.amount>.001)){const age=Math.max(0,Math.floor((asOf.getTime()-lot.date.getTime())/86400000)),index=ranges.findIndex(range=>age>=range.min&&age<=range.max);raw[index].amount+=lot.amount;raw[index].count++}const total=raw.reduce((sum,item)=>sum+item.amount,0);return{title,asOf:pdfDateFormatter.format(asOf),basis:`${basis} تم تجميع كل الفواتير من 0 إلى ${creditDays} يومًا في خانة واحدة غير مستحقة، ويبدأ الاستحقاق من اليوم ${creditDays+1}.`,total:money(total),buckets:raw.map((bucket,index)=>({label:ranges[index].label,value:money(bucket.amount),count:bucket.count,percent:total?`${(bucket.amount/total*100).toFixed(1)}%`:"0%",tone:ranges[index].tone}))}}
 
 function parseCsv(text: string) {
   const lines: string[][] = []; let row: string[] = []; let cell = ""; let quoted = false;
@@ -473,18 +475,21 @@ function ledgerPolarity(d:DataSet,debit?:string,credit?:string,balance?:string){
 }
 
 function prepareLedgerAging(d:DataSet,supplier:boolean,closing:number,now:Date,creditDays=30){
-  const debit=column(d,"debit"),credit=column(d,"credit"),bal=column(d,"balance"),amount=column(d,"amount"),date=column(d,"date"),invoiceDate=column(d,"invoiceDate"),ageDate=invoiceDate||date,ref=column(d,"ref"),sign=closing<0?-1:1,polarity=ledgerPolarity(d,debit,credit,bal);let lots:AgingLot[]=[],previousBalance:number|null=null,fallbackDate:Date|null=null;
+  const debit=column(d,"debit"),credit=column(d,"credit"),bal=column(d,"balance"),amount=column(d,"amount"),date=column(d,"date"),invoiceDate=column(d,"invoiceDate"),ageDate=invoiceDate||date,ref=column(d,"ref"),sign=closing<0?-1:1,polarity=bal?ledgerPolarity(d,debit,credit,bal):(supplier?-1:1);let lots:AgingLot[]=[],previousBalance:number|null=null,fallbackDate:Date|null=null;
   const transactionRows=d.rows.filter(row=>!!parseDate(value(row,ageDate))||(!!bal&&String(value(row,bal)??"").trim()!==""));
   for(const row of transactionRows){const issueDate=parseDate(value(row,ageDate)),lotDate=issueDate||now;fallbackDate=issueDate||fallbackDate;const rawBalance=value(row,bal),hasBalance=!!bal&&String(rawBalance??"").trim()!=="";let change=0;if(hasBalance){const current=number(rawBalance)*sign;change=previousBalance===null?polarity*(number(value(row,debit))-number(value(row,credit))):current-previousBalance;previousBalance=current}else if(debit||credit){const dr=number(value(row,debit)),cr=number(value(row,credit));change=polarity*(dr-cr)}else if(amount)change=number(value(row,amount));if(change>.001)lots.push({date:lotDate,amount:change,ref:String(value(row,ref)||"—")});else if(change<-.001)lots=consumeOldest(lots,-change)}
   lots=reconcileLots(lots,Math.abs(closing),fallbackDate||now).sort((a,b)=>a.date.getTime()-b.date.getTime());
   const basis=invoiceDate?"العمر محسوب من تاريخ إصدار كل فاتورة حتى آخر تاريخ في الكشف، مع توزيع السداد على أقدم فاتورة أولًا (FIFO). مجموع فئات الأعمار الست يطابق إجمالي المديونية دون فرق.":date?"العمر محسوب من التاريخ الموجود في سطر الفاتورة حتى آخر تاريخ في الكشف، مع توزيع السداد على أقدم فاتورة أولًا (FIFO). مجموع فئات الأعمار الست يطابق إجمالي المديونية دون فرق.":"لم يظهر تاريخ فاتورة صالح؛ لا يمكن اعتماد توزيع الأعمار دون تاريخ الإصدار.";
   const aging=buildAging(lots,now,basis,supplier?"أعمار مستحقات المورد بعد مدة الائتمان":"أعمار مستحقات العميل بعد مدة الائتمان",creditDays);
-  const rows=lots.map(lot=>{const invoiceAge=Math.max(0,Math.floor((now.getTime()-lot.date.getTime())/86400000)),due=invoiceAge>creditDays;return[lot.ref||"—",pdfDateFormatter.format(lot.date),String(invoiceAge),`${agingLabels[agingIndex(invoiceAge)]} · ${due?"مستحق":"غير مستحق"}`,money(lot.amount)]});
-  return{aging,rows,openCount:lots.length,basis};
+  const rows=lots.map(lot=>{const invoiceAge=Math.max(0,Math.floor((now.getTime()-lot.date.getTime())/86400000)),due=invoiceAge>creditDays,dueDate=new Date(lot.date);dueDate.setDate(dueDate.getDate()+creditDays);const range=agingRanges(creditDays).find(item=>invoiceAge>=item.min&&invoiceAge<=item.max);return[lot.ref||"—",pdfDateFormatter.format(lot.date),pdfDateFormatter.format(dueDate),String(invoiceAge),range?.label||`${invoiceAge} يومًا · ${due?"مستحق":"غير مستحق"}`,money(lot.amount)]});
+  const dueAt=(days:number)=>lots.filter(lot=>Math.max(0,Math.floor((now.getTime()-lot.date.getTime())/86400000))>days).reduce((sum,lot)=>sum+lot.amount,0);
+  const dueTotal=dueAt(creditDays),nonDueTotal=Math.max(0,Math.abs(closing)-dueTotal),scenarioDays=[...new Set([30,45,60,90,120,creditDays])].sort((a,b)=>a-b);
+  const dueScenarios={selectedDays:creditDays,items:scenarioDays.map(days=>({days,label:`الرصيد الفعلي المستحق بعد ${days} يومًا`,value:money(dueAt(days)),selected:days===creditDays}))};
+  return{aging,rows,openCount:lots.length,basis,dueTotal,nonDueTotal,dueScenarios};
 }
 
 function prepareSupplierSheet(d:DataSet,closing:number){
-  const debit=column(d,"debit"),credit=column(d,"credit"),balance=column(d,"balance"),date=column(d,"invoiceDate")||column(d,"date"),ref=column(d,"ref"),invoice=column(d,"invoice"),type=column(d,"type"),account=column(d,"account"),sign=closing<0?-1:1,polarity=ledgerPolarity(d,debit,credit,balance);
+  const debit=column(d,"debit"),credit=column(d,"credit"),balance=column(d,"balance"),date=column(d,"invoiceDate")||column(d,"date"),ref=column(d,"ref"),invoice=column(d,"invoice"),type=column(d,"type"),account=column(d,"account"),sign=closing<0?-1:1,polarity=balance?ledgerPolarity(d,debit,credit,balance):-1;
   const totals={purchase:0,sale:0,payment:0,return:0,discount:0,increase:0,decrease:0};let previous:number|null=null,opening=0;
   const rows=d.rows.filter(row=>!!parseDate(value(row,date))||(!!balance&&String(value(row,balance)??"").trim()!=="")).map(row=>{
     const dr=number(value(row,debit)),cr=number(value(row,credit)),rawBalance=value(row,balance),hasBalance=String(rawBalance??"").trim()!=="",current=hasBalance?number(rawBalance)*sign:null;
@@ -504,41 +509,44 @@ function prepareSupplierSheet(d:DataSet,closing:number){
     {label:"رصيد أول المدة",value:money(opening),hint:"الرصيد قبل أول حركة في الملف",tone:"info"},
     {label:"مشتريات",value:money(totals.purchase),hint:"فواتير ومستندات مشتريات",tone:"warn"},
     {label:"مبيعات",value:money(totals.sale),hint:"فواتير ومستندات مبيعات",tone:"ok"},
-    {label:"سداد",value:money(totals.payment),hint:"دفعات وتحويلات مالية",tone:"ok"},
+    {label:"سندات الصرف والسداد",value:money(totals.payment),hint:"تُخصم من رصيد المورد ومن أقدم الفواتير أولًا",tone:"ok"},
     {label:"مرتجع",value:money(totals.return),hint:"مرتجعات وخصومات",tone:"ok"},
     {label:"إشعار خصم",value:money(totals.discount),hint:"إشعارات خصم مثبتة في الكشف",tone:"ok"},
     {label:"غير مصنف",value:money(totals.increase+totals.decrease),hint:"لم يوضح الملف نوع المستند",tone:"info"},
     ...(Math.abs(unread)>.02?[{label:"فرق يحتاج مراجعة",value:money(Math.abs(unread)),hint:"فرق بين تفاصيل الحركات والرصيد الختامي",tone:"bad" as const}]:[]),
     {label:"صافي الرصيد حسب الكشف",value:money(target),hint:balance?"مطابق لآخر رصيد مسجل":"محسوب من المدين والدائن",tone:target?"warn":"ok"},
   ]};
-  return{flow,rows,totalIncrease:totals.purchase+totals.increase,totalDecrease:totals.sale+totals.payment+totals.return+totals.discount+totals.decrease};
+  return{flow,rows,totalIncrease:totals.purchase+totals.increase,totalDecrease:totals.sale+totals.payment+totals.return+totals.discount+totals.decrease,totalPayments:totals.payment};
 }
 
 function ledger(ds: DataSet[], supplier=false,creditDays=30): AnalysisResult {
   const d=ds[0], debit=column(d,"debit"), credit=column(d,"credit"), bal=column(d,"balance"),date=column(d,"date"),invoiceDate=column(d,"invoiceDate"),ageDate=invoiceDate||date;
   const transactionRows=d.rows.filter(row=>!!parseDate(value(row,ageDate))||(!!bal&&String(value(row,bal)??"").trim()!=="")),totalDebit=transactionRows.reduce((s,r)=>s+number(value(r,debit)),0), totalCredit=transactionRows.reduce((s,r)=>s+number(value(r,credit)),0);
   const lastBalanceRow=bal?[...d.rows].reverse().find(row=>String(value(row,bal)??"").trim()!==""):undefined,closing=bal&&lastBalanceRow?number(value(lastBalanceRow,bal)):supplier?totalCredit-totalDebit:totalDebit-totalCredit,lastDate=[...d.rows].reverse().map(r=>parseDate(value(r,ageDate))).find((x):x is Date=>!!x),reportDate=parseDate(d.reportAsOf),asOf=reportDate?new Date(reportDate):lastDate?new Date(lastDate):new Date();asOf.setHours(0,0,0,0);
-  const prepared=prepareLedgerAging(d,supplier,closing,asOf,creditDays),supplierSheet=supplier?prepareSupplierSheet(d,closing):undefined,missing=[debit,credit,ageDate].filter(x=>!x).length,dueLabel=supplier?"صافي رصيد المورد حسب الكشف":"إجمالي المستحق على العميل",dueValue=Math.abs(closing);
+  const prepared=prepareLedgerAging(d,supplier,closing,asOf,creditDays),supplierSheet=supplier?prepareSupplierSheet(d,closing):undefined,missing=[debit,credit,ageDate].filter(x=>!x).length,dueLabel=supplier?"الرصيد الفعلي المستحق للمورد":"الرصيد الفعلي المستحق على العميل",dueValue=prepared.dueTotal;
   const summary:AnalysisResult["summary"]=supplier&&supplierSheet?[
-    {label:"إجمالي الدائن",value:money(supplierSheet.totalIncrease)},
-    {label:"إجمالي المدين",value:money(supplierSheet.totalDecrease)},
+    {label:"إجمالي رصيد المورد",value:money(Math.abs(closing))},
+    {label:`غير مستحق خلال ${creditDays} يومًا`,value:money(prepared.nonDueTotal),tone:"ok"},
+    {label:"سندات الصرف والسداد المخصومة",value:money(supplierSheet.totalPayments),tone:"ok"},
     {label:dueLabel,value:money(dueValue),tone:dueValue?"warn":"ok"},
     {label:"فواتير مفتوحة",value:String(prepared.openCount),tone:prepared.openCount?"warn":"ok"},
   ]:[
+    {label:"إجمالي رصيد العميل",value:money(Math.abs(closing))},
+    {label:`غير مستحق خلال ${creditDays} يومًا`,value:money(prepared.nonDueTotal),tone:"ok"},
     {label:"إجمالي المدين",value:money(totalDebit)},
     {label:"إجمالي الدائن",value:money(totalCredit)},
     {label:dueLabel,value:money(dueValue),tone:dueValue?"warn":"ok"},
     {label:"فواتير مفتوحة",value:String(prepared.openCount),tone:prepared.openCount?"warn":"ok"},
   ];
   const findings:AnalysisResult["findings"]=[
-    {title:supplier?"تصنيف نوع المستند":"نتيجة استحقاق العميل",detail:supplier?"يعرض الجدول نوع المستند صراحةً: فاتورة مشتريات، فاتورة مبيعات، سداد، مرتجع، إشعار خصم، أو غير مصنف إذا تعذرت قراءة البيان.":`${dueLabel} هو ${money(dueValue)} وفق آخر رصيد في الملف، مع توزيع التحصيلات على أقدم فاتورة أولًا.`,tone:dueValue?"warn":"ok"},
+    {title:"احتساب المستحق الفعلي",detail:`إجمالي الرصيد ${money(Math.abs(closing))}، منه ${money(prepared.nonDueTotal)} غير مستحق خلال ${creditDays} يومًا، والمستحق الفعلي بعد خصم ${supplier?"سندات الصرف والسداد":"سندات القبض والتحصيلات"} من أقدم الفواتير هو ${money(dueValue)}.`,tone:dueValue?"warn":"ok"},
     {title:"مصدر صافي الرصيد",detail:bal?"تم أخذ الصافي من آخر خلية رصيد غير فارغة في الكشف.":"لم يظهر عمود رصيد؛ تم احتساب الصافي من المدين والدائن.",tone:bal?"ok":"warn"},
     {title:"أساس أعمار المستحقات",detail:prepared.basis,tone:"ok"},
     {title:missing?"أعمدة تحتاج تأكيد":"تم التعرف على الأعمدة",detail:missing?"بعض أعمدة المدين/الدائن/تاريخ إصدار الفاتورة غير واضحة؛ راجع أسماء الأعمدة.":"تم احتساب النتائج من الأعمدة الأصلية دون تعديل.",tone:missing?"warn":"ok"},
   ];
-  const table=supplier&&supplierSheet?{headers:["التاريخ","نوع المستند","البيان/المرجع","مدين","دائن","الرصيد"],rows:supplierSheet.rows.slice(-300)}:prepared.rows.length?{headers:["المرجع","تاريخ إصدار الفاتورة","العمر بالأيام","فئة العمر","الرصيد المفتوح"],rows:prepared.rows.slice(-100)}:undefined;
-  const checks=[...standardChecks(ds),...(supplier?["صُنفت مستندات المورد إلى فاتورة مشتريات، فاتورة مبيعات، سداد، مرتجع، إشعار خصم، أو غير مصنف عند تعذر قراءة البيان.","أعمار الرصيد تُحسب من تاريخ إصدار الفاتورة الظاهر في كشف الحساب.","صافي الرصيد يطابق آخر رصيد غير فارغ في الكشف عند توفر عمود الرصيد."]:["في حساب العميل تُصنف المستندات إلى فاتورة مبيعات، سداد، مرتجع، إشعار خصم، أو غير مصنف عند تعذر قراءة البيان.","أعمار ديون العميل تُحسب من تاريخ إصدار الفاتورة الظاهر في كشف الحساب.","تم توزيع التحصيلات على أقدم فاتورة أولًا (FIFO)."])];
-  return{title:supplier?"تحليل مشتريات ومبيعات المورد":"تحليل حساب العميل",confidence:missing?"متوسطة":"عالية",conclusion:{label:dueLabel,value:money(dueValue),detail:dueValue?`${bal?"تم اعتماد آخر رصيد غير فارغ في الكشف":"تم احتساب الصافي من المدين والدائن"}${lastDate?` بتاريخ ${pdfDateFormatter.format(lastDate)}`:""}.`:`لا يوجد رصيد ظاهر${lastDate?` حتى ${pdfDateFormatter.format(lastDate)}`:""}.`,tone:dueValue?"warn":"ok"},aging:prepared.aging,supplierFlow:supplierSheet?.flow,summary,findings,table,checks,sources:ds.map(x=>x.fileName)};
+  const table=supplier&&supplierSheet?{headers:["التاريخ","نوع المستند","البيان/المرجع","مدين","دائن","الرصيد"],rows:supplierSheet.rows.slice(-300)}:prepared.rows.length?{headers:["المرجع","تاريخ إصدار الفاتورة",`تاريخ الاستحقاق (+${creditDays} يومًا)`,"العمر بالأيام","فئة العمر","الرصيد المفتوح"],rows:prepared.rows.slice(-100)}:undefined;
+  const checks=[...standardChecks(ds),`قاعدة ثابتة: المستحق الفعلي يضم فقط الفواتير التي تجاوزت مدة الائتمان ${creditDays} يومًا.`,`تُخصم ${supplier?"سندات الصرف والسداد":"سندات القبض والتحصيلات"} من أقدم الفواتير أولًا (FIFO) قبل حساب المستحق.`,"الرصيد غير المستحق لا يدخل ضمن قيمة المستحق الفعلي.",...(supplier?["صُنفت مستندات المورد إلى فاتورة مشتريات، فاتورة مبيعات، سداد، مرتجع، إشعار خصم، أو غير مصنف عند تعذر قراءة البيان.","صافي الرصيد يطابق آخر رصيد غير فارغ في الكشف عند توفر عمود الرصيد."]:["في حساب العميل تُصنف المستندات إلى فاتورة مبيعات، سداد، مرتجع، إشعار خصم، أو غير مصنف عند تعذر قراءة البيان."])];
+  return{title:supplier?"تحليل مشتريات ومبيعات المورد":"تحليل حساب العميل",confidence:missing?"متوسطة":"عالية",conclusion:{label:dueLabel,value:money(dueValue),detail:`تم فحص تاريخ كل فاتورة وإضافة مدة ائتمان ${creditDays} يومًا، ثم خصم ${supplier?"سندات الصرف والسداد":"سندات القبض والتحصيلات"} من أقدم الفواتير. لا يدخل الرصيد غير المستحق في هذه القيمة.`,tone:dueValue?"warn":"ok"},dueScenarios:prepared.dueScenarios,aging:prepared.aging,supplierFlow:supplierSheet?.flow,summary,findings,table,checks,sources:ds.map(x=>x.fileName)};
 }
 
 type ReconciliationMovement={date:Date|null;amount:number;ref:string};
