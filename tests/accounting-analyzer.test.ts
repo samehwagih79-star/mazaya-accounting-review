@@ -114,6 +114,24 @@ test("detects duplicated entries", async () => {
   assert.equal(result.summary[1].value, "1");
 });
 
+test("audits journal entries without changing them", async () => {
+  const data = await csv("journal.csv", "رقم القيد,التاريخ,الحساب,البيان,مدين,دائن\nJV-1,2026-08-20,الصندوق,قبض,1000,0\nJV-1,2026-08-20,المبيعات,قبض,0,1000\nJV-2,2026-08-21,مصروف,رسوم,500,0\nJV-2,2026-08-21,مصروف,رسوم,500,0");
+  const result = analyzeData("تحليل قيود اليومية", [data]);
+  assert.equal(result.title, "تحليل قيود اليومية");
+  assert.equal(result.summary.find(item=>item.label==="قيود غير متوازنة")?.value, "1");
+  assert.equal(result.summary.find(item=>item.label==="سطور مكررة")?.value, "1");
+  assert.match(result.checks.join(" "), /لا يتم إنشاء أو ترحيل/);
+});
+
+test("shows customer flow like supplier flow with customer deductions", async () => {
+  const data = await csv("customer.csv", "التاريخ,رقم القيد,نوع الحركة,مدين,دائن,الرصيد\n2026-06-01,1,فاتورة مبيعات,10000,0,10000\n2026-07-20,2,سند قبض,0,3000,7000\n2026-07-25,3,مردود مبيعات,0,1000,6000");
+  const result = analyzeData("تحليل حساب عميل", [data], 45);
+  assert.equal(result.title, "تحليل مبيعات وتحصيلات العميل");
+  assert.equal(result.supplierFlow?.title, "ملخص حركة حساب العميل");
+  assert.equal(result.summary.find(item=>item.label==="سندات القبض والتحصيل المخصومة")?.value, "٣٬٠٠٠٫٠٠ ر.س");
+  assert.equal(result.summary.find(item=>item.label==="مردود المبيعات المخصوم")?.value, "١٬٠٠٠٫٠٠ ر.س");
+});
+
 test("finds invoice VAT arithmetic error", async () => {
   const data = await csv("sales.csv", "رقم الفاتورة,الصافي قبل الضريبة,الضريبة,الاجمالي شامل الضريبة\nINV-1,1000,150,1150\nINV-2,500,75,600");
   const result = analyzeData("مراجعة المبيعات والضريبة", [data]);
