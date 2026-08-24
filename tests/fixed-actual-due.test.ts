@@ -41,3 +41,18 @@ test("deducts customer returns and receipts before calculating the due balance",
   const result=analyzeData("تحليل حساب عميل",[data],45);
   assert.equal(result.conclusion?.value,"٧٠٠٫٠٠ ر.س");
 });
+
+test("includes the August 19 invoice and excludes the September 6 invoice at the August 24 cutoff",async()=>{
+  const data=await csv("supplier-cutoff.csv","التاريخ,البيان,مدين,دائن\n2026-07-05,فاتورة مشتريات,0,1000\n2026-07-23,فاتورة مشتريات,0,1000\n2026-08-24,تاريخ القياس,0,0");
+  const result=analyzeData("تحليل حساب مورد",[data],45);
+  assert.equal(result.conclusion?.value,"١٬٠٠٠٫٠٠ ر.س");
+  assert.match(result.dueSchedule?.includedThrough??"",/١٩.*٠٨.*٢٠٢٦/);
+  assert.match(result.dueSchedule?.nextDueDate??"",/٠٦.*٠٩.*٢٠٢٦/);
+  assert.equal(result.dueSchedule?.nextDueAmount,"١٬٠٠٠٫٠٠ ر.س");
+});
+
+test("counts an invoice on its exact due date",async()=>{
+  const data=await csv("supplier-exact-date.csv","التاريخ,البيان,مدين,دائن\n2026-07-10,فاتورة مشتريات,0,900\n2026-08-24,تاريخ القياس,0,0");
+  const result=analyzeData("تحليل حساب مورد",[data],45);
+  assert.equal(result.conclusion?.value,"٩٠٠٫٠٠ ر.س");
+});

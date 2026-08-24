@@ -197,3 +197,5 @@ nav button{font-size:14px;font-weight:650;color:#39465b;padding-top:12px;padding
   .cards strong{font-size:14px}
   .cards span{font-size:12px}
 }
+.due-cutoff{margin:16px 18px 2px;border:1px solid #9cc6b2;border-right:6px solid #2d9a69;border-radius:13px;background:linear-gradient(100deg,#edf9f3,#fff);padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:20px}.due-cutoff span,.due-cutoff strong,.due-cutoff small{display:block}.due-cutoff span{color:#247553;font-size:11px;font-weight:850}.due-cutoff h3{margin:5px 0;font-size:21px}.due-cutoff p{margin:0;color:#536176;font-size:12px}.next-due{min-width:285px;background:#fff;border:1px solid #cfe2d9;border-radius:10px;padding:12px}.next-due strong{font-size:20px;color:#173f68;margin:5px 0}.next-due small{color:#66758a;font-weight:700}.next-due.complete strong{font-size:13px}
+@media(max-width:620px){.due-cutoff{margin-right:15px;margin-left:15px;align-items:stretch;flex-direction:column}.next-due{min-width:0}}
