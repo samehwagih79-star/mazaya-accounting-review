@@ -420,3 +420,13 @@ test("flags same-reference bank movements with different amounts", async () => {
   assert.equal(result.summary.find(item=>item.label==="مبالغ مختلفة")?.value, "1");
   assert.equal(result.table?.rows.find(row=>row[0]==="مبلغ مختلف")?.[5], "١٠٠٫٠٠ ر.س");
 });
+
+test("matches one bank deposit against several ERP movements", async () => {
+  const bankFile = await csv("bank.csv", "التاريخ,المرجع,المبلغ\n2026-08-10,BATCH-1,1000");
+  const systemFile = await csv("erp.csv", "التاريخ,المرجع,المبلغ\n2026-08-09,SALE-1,400\n2026-08-10,SALE-2,350\n2026-08-11,SALE-3,250");
+  const result = analyzeData("مطابقة كشف البنك", [bankFile, systemFile]);
+  assert.equal(result.summary.find(item=>item.label==="مطابقات مجمعة")?.value, "1");
+  assert.equal(result.summary.find(item=>item.label==="بالبنك فقط")?.value, "0");
+  assert.equal(result.summary.find(item=>item.label==="بالنظام فقط")?.value, "0");
+  assert.equal(result.table?.rows.find(row=>row[0]==="مطابقة مجمعة")?.[7], "1 حركة بنك مقابل 3 حركة نظام");
+});
