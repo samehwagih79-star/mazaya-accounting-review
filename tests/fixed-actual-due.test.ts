@@ -56,3 +56,19 @@ test("counts an invoice on its exact due date",async()=>{
   const result=analyzeData("تحليل حساب مورد",[data],45);
   assert.equal(result.conclusion?.value,"٩٠٠٫٠٠ ر.س");
 });
+
+test("uses the running balance at the latest due supplier invoice then deducts later purchase returns and payments",async()=>{
+  const data=await csv("supplier-running-balance.csv","التاريخ,البيان,مدين,دائن,الرصيد\n2026-07-05,فاتورة مشتريات اجل,0,1127,53421.15\n2026-07-23,فاتورة مشتريات اجل,0,1127,54548.15\n2026-07-25,مردود مشتريات اجل,3191.25,0,51356.90\n2026-08-05,سند صرف,5000,0,46356.90\n2026-08-11,فاتورة مشتريات اجل,0,437,46793.90\n2026-08-15,فاتورة مشتريات اجل,0,2127.50,48921.40\n2026-08-18,سند صرف,10000,0,38921.40\n2026-08-24,تاريخ القياس,0,0,38921.40");
+  const result=analyzeData("تحليل حساب مورد",[data],45);
+  assert.equal(result.dueSchedule?.cutoffInvoiceDate,"٠٥‏/٠٧‏/٢٠٢٦");
+  assert.equal(result.dueSchedule?.cutoffBalance,"٥٣٬٤٢١٫١٥ ر.س");
+  assert.equal(result.dueSchedule?.laterDeductions,"١٨٬١٩١٫٢٥ ر.س");
+  assert.equal(result.conclusion?.value,"٣٥٬٢٢٩٫٩٠ ر.س");
+  assert.notEqual(result.dueScenarios?.items.find(item=>item.days===30)?.value,result.conclusion?.value);
+});
+
+test("deducts only later sales returns and receipts for customer accounts",async()=>{
+  const data=await csv("customer-running-balance.csv","التاريخ,البيان,مدين,دائن,الرصيد\n2026-07-05,فاتورة مبيعات اجل,53421.15,0,53421.15\n2026-07-23,فاتورة مبيعات اجل,1127,0,54548.15\n2026-07-25,مردود مبيعات اجل,0,3191.25,51356.90\n2026-08-05,سند قبض,0,5000,46356.90\n2026-08-11,فاتورة مبيعات اجل,437,0,46793.90\n2026-08-18,سند قبض,0,10000,36793.90\n2026-08-24,تاريخ القياس,0,0,36793.90");
+  const result=analyzeData("تحليل حساب عميل",[data],45);
+  assert.equal(result.conclusion?.value,"٣٥٬٢٢٩٫٩٠ ر.س");
+});
