@@ -23,3 +23,19 @@ test("locks the 45-day actual-due rule for customers",async()=>{
   assert.match(result.conclusion?.detail??"",/لا يدخل الرصيد غير المستحق/);
   assert.equal(result.dueScenarios?.items.find(item=>item.days===45)?.value,"٨٠٠٫٠٠ ر.س");
 });
+
+test("prefers the explicit due date and then applies supplier payments FIFO",async()=>{
+  const data=await csv("supplier-due.csv","التاريخ,تاريخ الاستحقاق,البيان,مدين,دائن\n2026-01-01,2026-04-01,فاتورة مشتريات,0,1000\n2026-03-15,2026-03-16,فاتورة مشتريات,0,500\n2026-03-20,,سند صرف,200,0");
+  const result=analyzeData("تحليل حساب مورد",[data],45);
+  assert.equal(result.conclusion?.value,"٥٠٠٫٠٠ ر.س");
+  assert.match(result.findings.map(item=>item.detail).join(" "),/تاريخ استحقاق صريح/);
+  assert.equal(result.dueTable?.rows[0][3],"موجود في الكشف");
+  assert.equal(result.dueTable?.rows[0][6],"غير مستحق");
+  assert.equal(result.dueTable?.rows[1][6],"مستحق");
+});
+
+test("deducts customer returns and receipts before calculating the due balance",async()=>{
+  const data=await csv("customer-due.csv","التاريخ,تاريخ الاستحقاق,البيان,مدين,دائن\n2026-01-01,2026-02-01,فاتورة مبيعات,1000,0\n2026-03-01,,مرتجع مبيعات,0,200\n2026-03-20,,سند قبض,0,100");
+  const result=analyzeData("تحليل حساب عميل",[data],45);
+  assert.equal(result.conclusion?.value,"٧٠٠٫٠٠ ر.س");
+});
