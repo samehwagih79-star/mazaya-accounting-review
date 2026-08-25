@@ -106,6 +106,9 @@ test("reads an unpaid customer invoice list and applies 30 to 60 day terms", asy
   assert.equal(result.dueSchedule?.nextDueDate, "٣٠‏/٠٩‏/٢٠٢٦");
   assert.equal(result.dueSchedule?.nextDueAmount, "١٬٥٠٠٫٠٠ ر.س");
   assert.equal(result.dueSchedule?.nextDueInvoicesAmount, "٥٠٠٫٠٠ ر.س");
+  assert.equal(result.dueTable?.headers[6], "مدة التأخير/المتبقي");
+  assert.equal(result.dueTable?.rows[0][6], "متأخر 25 يومًا");
+  assert.equal(result.dueTable?.rows[1][6], "متبقي 36 يومًا");
   assert.match(result.findings[1].detail, /قائمة فواتير مفتوحة غير مسددة/);
 });
 
