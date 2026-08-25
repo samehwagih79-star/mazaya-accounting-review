@@ -156,6 +156,30 @@ test("compares physical count with system inventory and values differences", asy
   assert.equal(result.summary.find(item=>item.label==="قيمة الزيادة")?.value, "٢٠٠٫٠٠ ر.س");
 });
 
+test("locks the approved PDF due balance rule for suppliers", () => {
+  const lines=[
+    "10,066.65 0 10,066.65 1/1/2026 قيد افتتاحي",
+    "10,532.4 0 465.75 19/1/2026 فاتورة مبيعات",
+    "11,515.65 0 983.25 1/4/2026 فاتورة مبيعات",
+    "12,159.65 0 644 5/4/2026 فاتورة مبيعات",
+    "7,159.65 5,000 0 7/4/2026 سند يومية حوالة",
+    "7,619.65 0 460 14/4/2026 فاتورة مبيعات",
+    "8,194.65 0 575 15/4/2026 فاتورة مبيعات",
+    "3,194.65 5,000 0 10/5/2026 سند يومية حوالة",
+    "2,950.85 243.8 0 17/6/2026 فاتورة مرتجع مبيعات",
+    "12,030.1 0 9,079.25 12/7/2026 فاتورة مبيعات",
+    "17,596.1 0 5,566 20/7/2026 فاتورة مبيعات",
+    "14,646.1 2,950 0 21/7/2026 سند يومية حوالة",
+    "25,024.85 0 10,378.75 10/8/2026 فاتورة مبيعات",
+    "26,284.1 0 1,259.25 10/8/2026 فاتورة مبيعات",
+    "26,744.1 0 460 23/8/2026 فاتورة مبيعات",
+  ];
+  const pdf={fileName:"مورد.pdf",kind:"pdf" as const,rows:[],columns:[],pdfLines:lines,rawText:lines.join("\n"),pages:1,reportAsOf:"24/8/2026"};
+  const result45=analyzeData("تحليل حساب مورد",[pdf],45),result30=analyzeData("تحليل حساب مورد",[pdf],30);
+  assert.equal(result45.conclusion?.value,"٠٫٨٥ ر.س");
+  assert.equal(result30.conclusion?.value,"١٤٬٦٤٦٫١٠ ر.س");
+});
+
 test("finds invoice VAT arithmetic error", async () => {
   const data = await csv("sales.csv", "رقم الفاتورة,الصافي قبل الضريبة,الضريبة,الاجمالي شامل الضريبة\nINV-1,1000,150,1150\nINV-2,500,75,600");
   const result = analyzeData("مراجعة المبيعات والضريبة", [data]);
