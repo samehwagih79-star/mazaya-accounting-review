@@ -91,7 +91,22 @@ test("uses invoice dates only and shows the nearest upcoming due date", async ()
   assert.equal(result.dueSchedule?.nextDueCreditDays, 60);
   assert.equal(result.dueSchedule?.nextDueRef, "PUR-NEXT");
   assert.equal(result.dueSchedule?.nextDueAmount, "١٤٬٠٠٠٫٠٠ ر.س");
+  assert.equal(result.dueSchedule?.nextDueInvoicesAmount, "٥٬٠٠٠٫٠٠ ر.س");
   assert.notEqual(result.dueSchedule?.nextDueDate, "٢٤‏/٠٨‏/٢٠٢٦");
+});
+
+test("reads an unpaid customer invoice list and applies 30 to 60 day terms", async () => {
+  const data = await csv("open-customer-invoices.csv", "رقم السند_1,المستند_2,التأريخ_3,مدين_4\n1,فاتوره مبيعات اجل,2026-06-01,1000\n2,فاتوره مبيعات اجل,2026-08-01,500");
+  data.reportAsOf = "25/08/2026";
+  const result = analyzeData("تحليل حساب عميل", [data], 60);
+
+  assert.equal(result.summary[0].value, "١٬٥٠٠٫٠٠ ر.س");
+  assert.equal(result.conclusion?.value, "١٬٠٠٠٫٠٠ ر.س");
+  assert.equal(result.summary[1].value, "٥٠٠٫٠٠ ر.س");
+  assert.equal(result.dueSchedule?.nextDueDate, "٣٠‏/٠٩‏/٢٠٢٦");
+  assert.equal(result.dueSchedule?.nextDueAmount, "١٬٥٠٠٫٠٠ ر.س");
+  assert.equal(result.dueSchedule?.nextDueInvoicesAmount, "٥٠٠٫٠٠ ر.س");
+  assert.match(result.findings[1].detail, /قائمة فواتير مفتوحة غير مسددة/);
 });
 
 test("places a recent supplier invoice in the 0 to 30 day bucket from its issue date", async () => {
