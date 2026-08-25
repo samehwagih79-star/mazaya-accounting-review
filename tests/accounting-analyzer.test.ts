@@ -90,6 +90,7 @@ test("uses invoice dates only and shows the nearest upcoming due date", async ()
   assert.equal(result.dueSchedule?.nextDueDays, 4);
   assert.equal(result.dueSchedule?.nextDueCreditDays, 60);
   assert.equal(result.dueSchedule?.nextDueRef, "PUR-NEXT");
+  assert.equal(result.dueSchedule?.nextDueAmount, "١٤٬٠٠٠٫٠٠ ر.س");
   assert.notEqual(result.dueSchedule?.nextDueDate, "٢٤‏/٠٨‏/٢٠٢٦");
 });
 
