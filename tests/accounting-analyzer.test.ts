@@ -81,6 +81,18 @@ test("shows a prominent supplier amount due for spreadsheet reports", async () =
   assert.equal(result.aging?.buckets[4].value, "٧٥٠٫٠٠ ر.س");
 });
 
+test("uses invoice dates only and shows the nearest upcoming due date", async () => {
+  const data = await csv("supplier-next-due.csv", "التاريخ,رقم المرجع,نوع الحركة,مدين,دائن,الرصيد\n2026-06-21,PUR-OLD,فاتورة مشتريات,0,10000,10000\n2026-06-30,PUR-NEXT,فاتورة مشتريات,0,5000,15000\n2026-08-24,PAY-1,سند صرف,1000,0,14000");
+  data.reportAsOf = "25/08/2026";
+  const result = analyzeData("تحليل حساب مورد", [data], 60);
+
+  assert.equal(result.dueSchedule?.nextDueDate, "٢٩‏/٠٨‏/٢٠٢٦");
+  assert.equal(result.dueSchedule?.nextDueDays, 4);
+  assert.equal(result.dueSchedule?.nextDueCreditDays, 60);
+  assert.equal(result.dueSchedule?.nextDueRef, "PUR-NEXT");
+  assert.notEqual(result.dueSchedule?.nextDueDate, "٢٤‏/٠٨‏/٢٠٢٦");
+});
+
 test("places a recent supplier invoice in the 0 to 30 day bucket from its issue date", async () => {
   const data = await csv("recent-supplier.csv", "تاريخ إصدار الفاتورة,رقم الفاتورة,مدين,دائن,الرصيد\n2026-08-01,PUR-NEW,0,1250,1250");
   const result = analyzeData("تحليل حساب مورد", [data]);
